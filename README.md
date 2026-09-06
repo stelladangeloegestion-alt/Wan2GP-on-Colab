@@ -21,7 +21,8 @@ Run the notebook top to bottom to clone Wan2GP, install all system and Python de
 3. **Download or update Wan2GP** – clones the upstream repository into `/content/Wan2GP` or pulls the latest changes when it already exists, then links Wan2GP's checkpoint and output folders into the selected data root.
 4. **Install system dependencies** – installs video and audio libraries required by Wan2GP, verifies FFmpeg's required capabilities, and installs an integrity-checked stable FFmpeg build if Colab's copy is too old.
 5. **Install Python dependencies** – reuses the PyTorch build already present in the Colab runtime when it is suitable, and installs Wan2GP's requirements.
-6. **Launch Wan2GP** – starts the Gradio UI; keep the cell running while you interact with Wan2GP.
+6. **UGC Ads Studio** – launches a second, independent Gradio app (its own public link) that turns a clip Wan2GP just generated into a publish-ready UGC-style ad: a bold hook for the first couple of seconds, burned-in captions for the rest of the script, and a crop to your ad platform's aspect ratio (9:16, 4:5, 1:1, or 16:9). Outputs are saved to `outputs/ugc_ads`.
+7. **Launch Wan2GP** – starts the Gradio UI; keep the cell running while you interact with Wan2GP.
 
 ## Requirements
 
@@ -38,6 +39,10 @@ Run the notebook top to bottom to clone Wan2GP, install all system and Python de
 Issues and pull requests are welcome. If you notice changes in Colab runtimes or Wan2GP dependencies, please open a PR so the notebook stays up to date.
 
 ## Changelog
+
+### 2026-09-06 — UGC Ads Studio
+
+Added a new notebook step that turns a Wan2GP-generated clip into a publish-ready UGC-style ad: a bold hook overlay for the first couple of seconds, burned-in captions timed to the rest of your script, and a crop to the aspect ratio your ad platform wants (9:16, 4:5, 1:1, or 16:9). It runs as its own Gradio app on a separate public link, so it stays usable alongside Wan2GP's own UI. Outputs are saved to `outputs/ugc_ads`, so they persist to Google Drive too when persistent storage is enabled. Captions are rendered via on-disk `textfile=` inputs to ffmpeg's `drawtext` filter rather than inlined text, which avoids Colab's ffmpeg build mis-parsing ad copy containing colons or `%` (prices, times, discount codes).
 
 ### 2026-08-07 — faster, more reliable setup
 
