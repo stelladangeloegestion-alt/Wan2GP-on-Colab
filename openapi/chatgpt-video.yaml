@@ -1,0 +1,125 @@
+openapi: 3.0.3
+info:
+  title: Wan2GP Colab Video API
+  version: 1.0.0
+  description: Authenticated API for generating videos with Wan2GP running in Google Colab.
+servers:
+  - url: https://YOUR-COLAB-TUNNEL-URL
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Check whether Wan2GP is online
+      security: []
+      responses:
+        '200':
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  service:
+                    type: string
+  /models:
+    get:
+      operationId: listModels
+      summary: List available video models
+      responses:
+        '200':
+          description: Available models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+  /generate:
+    post:
+      operationId: generateVideo
+      summary: Generate a video with Wan2GP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                  description: Detailed description of the video to generate.
+                model_type:
+                  type: string
+                  nullable: true
+                  description: Optional Wan2GP model type. Leave empty for automatic selection.
+                settings:
+                  type: object
+                  additionalProperties: true
+                  description: Optional Wan2GP settings such as resolution, duration or seed.
+      responses:
+        '200':
+          description: Generation job created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                    example: 3e4d2f4c9c2a4a3f9e0a7f8b6c1d2e3f
+  /jobs/{job_id}:
+    get:
+      operationId: getVideoJob
+      summary: Check video generation status
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /download/{job_id}/{index}:
+    get:
+      operationId: downloadVideo
+      summary: Download a generated video
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: index
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Generated video file
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
