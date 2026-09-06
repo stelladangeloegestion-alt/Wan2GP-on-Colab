@@ -1,9 +1,4 @@
-"""Small authenticated HTTP API for WanGP running in Google Colab.
-
-This uses WanGP's official in-process API (shared.api) instead of driving the
-Gradio UI. It is intended to be started after the Colab notebook has installed
-WanGP and its dependencies.
-"""
+"""Small authenticated HTTP API for WanGP running in Google Colab."""
 from __future__ import annotations
 
 import os
@@ -24,9 +19,10 @@ API_KEY = os.environ.get("WAN2GP_API_KEY", "")
 if not API_KEY:
     raise RuntimeError("WAN2GP_API_KEY is not set. Set a strong random API key before starting the server.")
 
-app = FastAPI(title="Wan2GP Colab API", version="1.0")
+app = FastAPI(title="Wan2GP Colab API", version="1.1")
 _session = None
 _session_lock = threading.Lock()
+_generation_lock = threading.Lock()
 _jobs: dict[str, Any] = {}
 
 
@@ -55,42 +51,76 @@ def get_session():
         return _session
 
 
+def choose_model_type(session, requested: str | None) -> str:
+    if requested:
+        return requested
+
+    # Prefer a small 5B text/video-capable model for Colab/T4, then fall back
+    # to the first text-to-video model exposed by the installed WanGP version.
+    records = session.list_model_defs(limit=500)
+    usable = []
+    for record in records:
+        model_type = str(record.get("model_type", ""))
+        name = str(record.get("name", ""))
+        text = f"{model_type} {name}".casefold()
+        if "5b" in text and ("video" in text or "ti2v" in text or "t2v" in text):
+            usable.append(model_type)
+
+    for candidate in ("ti2v-5B", "t2v-5B"):
+        if candidate in usable:
+            return candidate
+    if usable:
+        return usable[0]
+
+    for record in records:
+        model_type = str(record.get("model_type", ""))
+        text = f"{model_type} {record.get('name', '')}".casefold()
+        if "t2v" in text or "text-to-video" in text:
+            return model_type
+
+    raise RuntimeError("No text-to-video model is available in this WanGP installation.")
+
+
 def run_job(job_id: str, settings: dict[str, Any]) -> None:
     try:
-        session = get_session()
-        job = session.submit_task(settings)
-        _jobs[job_id] = {"status": "running", "job": job}
-        result = job.result()
-        files = [str(Path(p).resolve()) for p in (result.generated_files or [])]
-        _jobs[job_id] = {"status": "completed", "files": files}
+        # WanGP protects its own generation path, but this extra lock makes the
+        # HTTP service explicitly single-job so two clients cannot compete for
+        # the same Colab GPU.
+        with _generation_lock:
+            _jobs[job_id] = {"status": "running"}
+            session = get_session()
+            job = session.submit_task(settings)
+            result = job.result()
+            files = [str(Path(p).resolve()) for p in (result.generated_files or [])]
+            _jobs[job_id] = {"status": "completed", "files": files}
     except Exception as exc:
         _jobs[job_id] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
 
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "service": "wan2gp", "root": str(WAN_ROOT)}
+    return {"ok": True, "service": "wan2gp"}
+
+
+@app.get("/models", dependencies=[Depends(require_key)])
+def models() -> dict[str, Any]:
+    session = get_session()
+    records = session.list_model_metadata(include_availability=False, limit=500)
+    return {"models": records}
 
 
 @app.post("/generate", response_model=JobResponse, dependencies=[Depends(require_key)])
 def generate(request: GenerateRequest) -> JobResponse:
     session = get_session()
-    settings = dict(request.settings)
-    if request.model_type:
-        settings["model_type"] = request.model_type
-    if "model_type" not in settings:
-        settings["model_type"] = "t2v-A14B"
+    model_type = choose_model_type(session, request.model_type)
+    settings = session.get_default_settings(model_type)
+    settings.update(request.settings)
+    settings["model_type"] = model_type
     settings["prompt"] = request.prompt
 
-    # Validate/fill the model-specific defaults without forcing the caller to
-    # reproduce the full WanGP settings object.
-    defaults = session.get_default_settings(settings["model_type"])
-    defaults.update(settings)
-    settings = defaults
-
     job_id = uuid.uuid4().hex
-    _jobs[job_id] = {"status": "queued"}
-    threading.Thread(target=run_job, args=(job_id, settings), daemon=True).start()
+    _jobs[job_id] = {"status": "queued", "model_type": model_type}
+    threading.Thread(target=run_job, args=(job_id, settings), daemon=True, name=f"wan2gp-{job_id[:8]}").start()
     return JobResponse(job_id=job_id)
 
 
@@ -100,6 +130,8 @@ def job_status(job_id: str) -> dict[str, Any]:
     if state is None:
         raise HTTPException(status_code=404, detail="Unknown job")
     response = {"job_id": job_id, "status": state["status"]}
+    if "model_type" in state:
+        response["model_type"] = state["model_type"]
     if state["status"] == "completed":
         response["files"] = state["files"]
     if state["status"] == "failed":
@@ -115,7 +147,7 @@ def download(job_id: str, index: int) -> FileResponse:
     files = state.get("files", [])
     if index < 0 or index >= len(files):
         raise HTTPException(status_code=404, detail="Output not found")
-    path = Path(files[index])
-    if not path.is_file() or OUTPUT_DIR not in path.parents:
+    path = Path(files[index]).resolve()
+    if not path.is_file() or (path != OUTPUT_DIR and OUTPUT_DIR not in path.parents):
         raise HTTPException(status_code=404, detail="Output file unavailable")
     return FileResponse(path, filename=path.name)
